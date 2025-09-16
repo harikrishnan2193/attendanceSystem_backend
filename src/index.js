@@ -4,6 +4,9 @@ const cors = require("cors");
 const {connectDB} = require("./config/db");
 const userRoutes = require("./routes/userRoutes");
 const attendanceRoutes = require("./routes/attendanceRoutes");
+const breaksRoutes = require("./routes/breaksRoutes");
+const leaveRoutes = require("./routes/leaveRoutes");
+const employeeRoutes = require("./routes/employeeRoutes");
 
 // connect database
 connectDB();
@@ -18,6 +21,9 @@ app.use(express.json());
 //routes
 app.use("/api/users", userRoutes);
 app.use("/api/attendance", attendanceRoutes);
+app.use("/api/breaks", breaksRoutes);
+app.use("/api/leaves", leaveRoutes);
+app.use("/api/employees", employeeRoutes);
 
 // root endpoint
 app.get("/", (req, res) => {

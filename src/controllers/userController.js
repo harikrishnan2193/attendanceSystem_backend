@@ -1,4 +1,5 @@
 const User = require("../models/userModel");
+const { Op } = require('sequelize');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
@@ -7,8 +8,6 @@ const { v4: uuidv4 } = require('uuid');
 exports.registerController = async (req, res) => {
     try {
         const { name, email, password, confirmPassword } = req.body;
-        console.log(req.body);
-
 
         if (!name || !email || !password || !confirmPassword) {
             return res.status(400).json({ message: 'All fields are required' });
@@ -50,6 +49,18 @@ exports.registerController = async (req, res) => {
 
     } catch (err) {
         console.error('Registration error:', err);
+
+        // handle sequelize validation errors
+        if (err.name === 'SequelizeValidationError') {
+            const validationError = err.errors[0];
+            if (validationError.path === 'email' && validationError.validatorKey === 'isEmail') {
+                return res.status(400).json({ message: 'Please enter a valid email address' });
+            }
+            if (validationError.path === 'password' && validationError.validatorKey === 'len') {
+                return res.status(400).json({ message: 'Password must be at least 6 characters long' });
+            }
+        }
+
         res.status(500).json({ message: 'Internal server error' });
     }
 };
@@ -93,6 +104,60 @@ exports.loginController = async (req, res) => {
 
     } catch (err) {
         console.error('Login error:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// get available users (inactive/deleted employees)
+exports.getAvailableUsers = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const tokenUserId = req.user?.user_id;
+
+        if (!userId) {
+            return res.status(400).json({ message: 'userId is required' });
+        }
+
+        if (!tokenUserId) {
+            return res.status(401).json({ message: 'Invalid token' });
+        }
+
+        if (userId !== tokenUserId) {
+            return res.status(403).json({ message: 'Unauthorized access' });
+        }
+
+        // check user is admin
+        const adminUser = await User.findOne({
+            where: { user_id: userId }
+        });
+
+        if (!adminUser || adminUser.role !== 'ADMIN') {
+            return res.status(403).json({ message: 'You are not privileged to check the details' });
+        }
+
+        // get inactive and deleted employees
+        const availableUsers = await User.findAll({
+            attributes: ['name', 'email', 'status', 'user_id'],
+            where: {
+                role: 'EMPLOYEE',
+                status: { [Op.in]: ['INACTIVE', 'DELETED'] }
+            }
+        });
+
+        if (availableUsers.length === 0) {
+            return res.status(200).json({
+                message: 'No available users found',
+                users: []
+            });
+        }
+
+        res.status(200).json({
+            message: 'Available users retrieved successfully',
+            users: availableUsers
+        });
+
+    } catch (err) {
+        console.error('Get available users error:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 };

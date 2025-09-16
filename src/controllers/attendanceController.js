@@ -149,6 +149,21 @@ exports.checkOutController = async (req, res) => {
             return res.status(400).json({ message: 'No active check-in found for today' });
         }
 
+        // check for active break and close it
+        const Break = require("../models/breaksModel");
+        const activeBreak = await Break.findOne({
+            where: {
+                attendance_id: attendance.id,
+                break_end: null
+            }
+        });
+
+        let breakMessage = '';
+        if (activeBreak) {
+            await activeBreak.update({ break_end: new Date() });
+            breakMessage = ' Active break was automatically ended.';
+        }
+
         // calculate total hours
         const checkOutTime = new Date();
         const totalHours = ((checkOutTime - attendance.check_in) / (1000 * 60 * 60)).toFixed(2);
@@ -160,7 +175,7 @@ exports.checkOutController = async (req, res) => {
         });
 
         res.status(200).json({
-            message: 'Check-out successful',
+            message: `Check-out successful.${breakMessage}`,
             attendance: {
                 ...attendance.toJSON(),
                 check_out: checkOutTime,
@@ -170,6 +185,95 @@ exports.checkOutController = async (req, res) => {
 
     } catch (err) {
         console.error('Check-out error:', err);
+        res.status(500).json({ message: 'Internal server error' });
+    }
+};
+
+// get attendance history
+exports.getAttendanceHistory = async (req, res) => {
+    try {
+        const { userId } = req.params;
+        const tokenUserId = req.user?.user_id;
+
+        if (!userId) {
+            return res.status(400).json({ message: 'userId is required' });
+        }
+
+        if (userId !== tokenUserId) {
+            return res.status(403).json({ message: 'Unauthorized access' });
+        }
+
+        const Leave = require("../models/leaveModel");
+
+        // get attendance records
+        const attendanceRecords = await Attendance.findAll({
+            where: { user_id: userId },
+            order: [['check_in', 'DESC']]
+        });
+
+        // get leave records
+        const leaveRecords = await Leave.findAll({
+            where: {
+                user_id: userId
+            }
+        });
+
+        // filter approved leaves
+        const approvedLeaves = leaveRecords.filter(leave => leave.status === 'APPROVED');
+
+
+        // process attendance data
+        const history = [];
+
+        // add attendance records
+        attendanceRecords.forEach(record => {
+            const date = new Date(record.check_in).toISOString().split('T')[0];
+            const checkIn = record.check_in ? new Date(record.check_in).toLocaleTimeString() : null;
+            const checkOut = record.check_out ? new Date(record.check_out).toLocaleTimeString() : null;
+
+            history.push({
+                date,
+                checkIn,
+                checkOut,
+                timeSpent: record.total_hours || '0.00',
+                status: 'Present'
+            });
+        });
+
+        // add leave records
+        approvedLeaves.forEach(leave => {
+            const startDate = new Date(leave.start_date);
+            const endDate = new Date(leave.end_date);
+
+            for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
+                const date = d.toISOString().split('T')[0];
+
+                // check if attendance exists for this date
+                const existingAttendance = history.find(h => h.date === date);
+                if (!existingAttendance) {
+                    history.push({
+                        date,
+                        checkIn: null,
+                        checkOut: null,
+                        timeSpent: '0.00',
+                        status: 'Leave',
+                        reason: leave.reason
+                    });
+                }
+            }
+        });
+
+
+        // sort by date descending
+        history.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+        res.status(200).json({
+            message: 'Attendance history retrieved successfully',
+            history
+        });
+
+    } catch (err) {
+        console.error('Get attendance history error:', err);
         res.status(500).json({ message: 'Internal server error' });
     }
 };

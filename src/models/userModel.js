@@ -14,11 +14,17 @@ const User = sequelize.define('User', {
     email: {
         type: DataTypes.STRING(100),
         allowNull: false,
-        unique: true
+        unique: true,
+        validate: {
+            isEmail: true
+        }
     },
     password: {
         type: DataTypes.STRING(255),
-        allowNull: false
+        allowNull: false,
+        validate: {
+            len: [6, 255]
+        }
     },
     role: {
         type: DataTypes.ENUM('ADMIN', 'EMPLOYEE'),
@@ -27,10 +33,14 @@ const User = sequelize.define('User', {
     created_at: {
         type: DataTypes.DATE,
         defaultValue: DataTypes.NOW
-    }
+    },
+    status: {
+        type: DataTypes.ENUM('ACTIVE', 'INACTIVE', 'DELETED'),
+        defaultValue: 'ACTIVE'
+    },
 }, {
     tableName: 'users',
-    timestamps: false 
+    timestamps: false
 });
 
 module.exports = User;
