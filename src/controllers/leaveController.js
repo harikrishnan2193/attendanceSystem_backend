@@ -16,9 +16,32 @@ exports.createLeave = async (req, res) => {
             return res.status(403).json({ message: 'Unauthorized access' });
         }
 
-        if (new Date(startDate) > new Date(endDate)) {
+        // date validation
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const startDateObj = new Date(startDate);
+        const endDateObj = new Date(endDate);
+
+        // Check if end date is before today
+        if (endDateObj < today) {
+            return res.status(400).json({
+                message: 'End date cannot be in the past. Please select valid leave dates.'
+            });
+        }
+
+        let actualStartDate = startDate;
+        let dateMessage = '';
+
+        // if start date is before today
+        if (startDateObj < today) {
+            actualStartDate = today.toISOString().split('T')[0];
+            dateMessage = 'Start date was adjusted to today as past dates are not allowed. ';
+        }
+
+        if (new Date(actualStartDate) > endDateObj) {
             return res.status(400).json({ message: 'Start date cannot be after end date' });
         }
+
 
         // check user role
         const user = await User.findOne({
@@ -41,9 +64,9 @@ exports.createLeave = async (req, res) => {
         });
 
         res.status(201).json({
-            message: user.role === 'ADMIN'
+            message: dateMessage + (user.role === 'ADMIN'
                 ? 'Leave request auto-approved for admin'
-                : 'Leave request submitted successfully',
+                : 'Leave request submitted successfully'),
             leave
         });
 
@@ -85,7 +108,7 @@ exports.getLeaves = async (req, res) => {
 
         const leaves = await Leave.findAll({
             where: whereCondition,
-            attributes: ['user_id', 'reason', 'status', 'start_date', 'end_date'],
+            attributes: ['id', 'user_id', 'reason', 'status', 'start_date', 'end_date'],
             include: [{
                 model: User,
                 attributes: ['name', 'email']
@@ -98,6 +121,7 @@ exports.getLeaves = async (req, res) => {
             const isValid = startDate >= today;
 
             return {
+                id: leave.id,
                 user_id: leave.user_id,
                 name: leave.User.name,
                 email: leave.User.email,
@@ -123,11 +147,11 @@ exports.getLeaves = async (req, res) => {
 //update leave status by admin
 exports.updateLeaveStatus = async (req, res) => {
     try {
-        const { userId, status } = req.body;
+        const { leaveId, status } = req.body;
         const tokenUserId = req.user?.user_id;
 
-        if (!userId || !status) {
-            return res.status(400).json({ message: 'userId and status are required' });
+        if (!leaveId || !status) {
+            return res.status(400).json({ message: 'leaveId and status are required' });
         }
 
         if (!tokenUserId) {
@@ -145,7 +169,7 @@ exports.updateLeaveStatus = async (req, res) => {
 
         // find and update leave
         const leave = await Leave.findOne({
-            where: { user_id: userId }
+            where: { id: leaveId }
         });
 
         if (!leave) {
@@ -164,4 +188,3 @@ exports.updateLeaveStatus = async (req, res) => {
         res.status(500).json({ message: 'Internal server error' });
     }
 };
-

@@ -1,4 +1,5 @@
 const Attendance = require("../models/attendanceModel");
+const Break = require("../models/breaksModel");
 const { Op } = require('sequelize');
 
 // get attendance status
@@ -150,7 +151,6 @@ exports.checkOutController = async (req, res) => {
         }
 
         // check for active break and close it
-        const Break = require("../models/breaksModel");
         const activeBreak = await Break.findOne({
             where: {
                 attendance_id: attendance.id,
@@ -189,10 +189,11 @@ exports.checkOutController = async (req, res) => {
     }
 };
 
-// get attendance history
+// get attendance history with pagination
 exports.getAttendanceHistory = async (req, res) => {
     try {
         const { userId } = req.params;
+        const { page = 1, limit = 5 } = req.query;
         const tokenUserId = req.user?.user_id;
 
         if (!userId) {
@@ -203,26 +204,45 @@ exports.getAttendanceHistory = async (req, res) => {
             return res.status(403).json({ message: 'Unauthorized access' });
         }
 
+        const User = require("../models/userModel");
         const Leave = require("../models/leaveModel");
+        const offset = (page - 1) * limit;
 
-        // get attendance records
+        // Check if user is admin
+        const currentUser = await User.findByPk(userId);
+        const isAdmin = currentUser?.role === 'ADMIN';
+
+        // get attendance records with breaks and user info
         const attendanceRecords = await Attendance.findAll({
-            where: { user_id: userId },
+            where: isAdmin ? {} : { user_id: userId },
+            include: [
+                {
+                    model: Break,
+                    required: false
+                },
+                {
+                    model: User,
+                    attributes: ['user_id', 'name', 'email'],
+                    required: true
+                }
+            ],
             order: [['check_in', 'DESC']]
         });
 
         // get leave records
         const leaveRecords = await Leave.findAll({
-            where: {
-                user_id: userId
-            }
+            where: isAdmin ? {} : { user_id: userId },
+            include: isAdmin ? [{
+                model: User,
+                attributes: ['user_id', 'name', 'email'],
+                required: true
+            }] : []
         });
 
         // filter approved leaves
         const approvedLeaves = leaveRecords.filter(leave => leave.status === 'APPROVED');
 
-
-        // process attendance data
+        // attendance data
         const history = [];
 
         // add attendance records
@@ -231,12 +251,24 @@ exports.getAttendanceHistory = async (req, res) => {
             const checkIn = record.check_in ? new Date(record.check_in).toLocaleTimeString() : null;
             const checkOut = record.check_out ? new Date(record.check_out).toLocaleTimeString() : null;
 
+            const breaks = record.Breaks ? record.Breaks.map(breakRecord => ({
+                breakStart: new Date(breakRecord.break_start).toLocaleTimeString(),
+                breakEnd: breakRecord.break_end ? new Date(breakRecord.break_end).toLocaleTimeString() : null,
+                duration: breakRecord.break_end ?
+                    ((new Date(breakRecord.break_end) - new Date(breakRecord.break_start)) / (1000 * 60)).toFixed(0) + ' mins' :
+                    'Ongoing'
+            })) : [];
+
             history.push({
                 date,
                 checkIn,
                 checkOut,
                 timeSpent: record.total_hours || '0.00',
-                status: 'Present'
+                status: 'Present',
+                breaks,
+                user_id: record.User.user_id,
+                name: record.User.name,
+                email: record.User.email
             });
         });
 
@@ -247,9 +279,7 @@ exports.getAttendanceHistory = async (req, res) => {
 
             for (let d = new Date(startDate); d <= endDate; d.setDate(d.getDate() + 1)) {
                 const date = d.toISOString().split('T')[0];
-
-                // check if attendance exists for this date
-                const existingAttendance = history.find(h => h.date === date);
+                const existingAttendance = history.find(h => h.date === date && h.user_id === leave.user_id);
                 if (!existingAttendance) {
                     history.push({
                         date,
@@ -257,19 +287,33 @@ exports.getAttendanceHistory = async (req, res) => {
                         checkOut: null,
                         timeSpent: '0.00',
                         status: 'Leave',
-                        reason: leave.reason
+                        reason: leave.reason,
+                        breaks: [],
+                        user_id: isAdmin ? leave.User.user_id : leave.user_id,
+                        name: isAdmin ? leave.User.name : currentUser.name,
+                        email: isAdmin ? leave.User.email : currentUser.email
                     });
                 }
             }
         });
 
-
         // sort by date descending
         history.sort((a, b) => new Date(b.date) - new Date(a.date));
 
+        // pagination
+        const totalRecords = history.length;
+        const paginatedHistory = history.slice(offset, offset + parseInt(limit));
+        const hasMore = offset + parseInt(limit) < totalRecords;
+
         res.status(200).json({
             message: 'Attendance history retrieved successfully',
-            history
+            history: paginatedHistory,
+            pagination: {
+                currentPage: parseInt(page),
+                totalRecords,
+                hasMore,
+                limit: parseInt(limit)
+            }
         });
 
     } catch (err) {
